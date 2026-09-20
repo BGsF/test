@@ -148,8 +148,10 @@ public class MainActivity extends Activity {
     private void chooseFiles() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
+        // MIME 필터를 걸지 않는다. Android/브라우저/ChatGPT 다운로드 파일은
+        // CSV여도 application/octet-stream 등으로 등록되는 경우가 있어
+        // MIME 제한을 두면 파일이 회색으로 비활성화될 수 있다.
         intent.setType("*/*");
-        intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"text/csv", "text/plain", "application/csv", "application/vnd.ms-excel"});
         intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
         startActivityForResult(Intent.createChooser(intent, "OHLCV CSV 선택"), REQ_FILES);
     }
