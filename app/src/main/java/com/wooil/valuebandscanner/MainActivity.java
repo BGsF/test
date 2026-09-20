@@ -2,6 +2,7 @@ package com.wooil.valuebandscanner;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.DatePickerDialog;
 import android.content.ClipData;
 import android.content.Intent;
 import android.graphics.Color;
@@ -25,6 +26,7 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -54,6 +56,8 @@ public class MainActivity extends Activity {
     private LinearLayout resultBox;
     private Button scanButton;
     private Button toggleButton;
+    private Button dateButton;
+    private String selectedAsOfDate = null;
     private boolean showAll = false;
     private List<Result> lastResults = new ArrayList<>();
 
@@ -119,6 +123,20 @@ public class MainActivity extends Activity {
         controls.addView(toggleButton);
         root.addView(controls);
 
+        LinearLayout dateControls = new LinearLayout(this);
+        dateControls.setOrientation(LinearLayout.HORIZONTAL);
+        dateButton = button("기준일: 최신");
+        Button latestButton = button("최신일로");
+        dateControls.addView(dateButton);
+        dateControls.addView(latestButton);
+        root.addView(dateControls);
+
+        dateButton.setOnClickListener(v -> showDatePicker());
+        latestButton.setOnClickListener(v -> {
+            selectedAsOfDate = null;
+            dateButton.setText("기준일: 최신");
+        });
+
         fileStatus = text("선택된 파일 없음", 11, Color.rgb(160, 170, 181));
         fileStatus.setPadding(dp(4), dp(8), dp(4), dp(4));
         root.addView(fileStatus);
@@ -143,6 +161,26 @@ public class MainActivity extends Activity {
             toggleButton.setText(showAll ? "후보만 보기" : "전체 보기");
             renderResults();
         });
+    }
+
+    private void showDatePicker() {
+        Calendar c = Calendar.getInstance();
+        if (selectedAsOfDate != null && selectedAsOfDate.matches("\\d{4}-\\d{2}-\\d{2}")) {
+            try {
+                String[] p = selectedAsOfDate.split("-");
+                c.set(Integer.parseInt(p[0]), Integer.parseInt(p[1]) - 1, Integer.parseInt(p[2]));
+            } catch (Exception ignored) {}
+        }
+        new DatePickerDialog(
+                this,
+                (view, year, month, day) -> {
+                    selectedAsOfDate = String.format(Locale.US, "%04d-%02d-%02d", year, month + 1, day);
+                    dateButton.setText("기준일: " + selectedAsOfDate);
+                },
+                c.get(Calendar.YEAR),
+                c.get(Calendar.MONTH),
+                c.get(Calendar.DAY_OF_MONTH)
+        ).show();
     }
 
     private void chooseFiles() {
@@ -196,6 +234,7 @@ public class MainActivity extends Activity {
         scanStatus.setText("CSV 읽는 중...");
 
         List<Uri> work = new ArrayList<>(selectedUris);
+        String cutoffDate = selectedAsOfDate;
         executor.execute(() -> {
             try {
                 ParseBundle bundle = new ParseBundle();
@@ -211,7 +250,7 @@ public class MainActivity extends Activity {
                 int pos = 0;
                 for (Map.Entry<String, List<Row>> e : bundle.groups.entrySet()) {
                     pos++;
-                    Result r = analyze(e.getKey(), bundle.names.get(e.getKey()), e.getValue());
+                    Result r = analyze(e.getKey(), bundle.names.get(e.getKey()), e.getValue(), cutoffDate);
                     if (r != null) results.add(r);
                     final int fp = pos;
                     if (fp % 20 == 0 || fp == total) {
@@ -235,7 +274,8 @@ public class MainActivity extends Activity {
                     toggleButton.setEnabled(true);
                     showAll = false;
                     toggleButton.setText("전체 보기");
-                    scanStatus.setText("완료 · 분석 " + results.size() + "종목 · 1차 후보 " + fc + "종목");
+                    String basis = cutoffDate == null ? "최신" : cutoffDate;
+                    scanStatus.setText("완료 · 요청 기준일 " + basis + " · 분석 " + results.size() + "종목 · 1차 후보 " + fc + "종목");
                     renderResults();
                 });
             } catch (Exception ex) {
@@ -281,7 +321,8 @@ public class MainActivity extends Activity {
                 String name = iName >= 0 && iName < c.size() ? c.get(iName).trim() : code;
                 try {
                     Row r = new Row();
-                    r.date = c.get(iDate).trim();
+                    r.date = normalizeDate(c.get(iDate));
+                    if (r.date.isBlank()) continue;
                     r.open = num(c.get(iOpen));
                     r.high = num(c.get(iHigh));
                     r.low = num(c.get(iLow));
@@ -293,6 +334,21 @@ public class MainActivity extends Activity {
                 } catch (Exception ignored) {}
             }
         }
+    }
+
+    private static String normalizeDate(String s) {
+        String v = s == null ? "" : s.trim().replace(".", "-").replace("/", "-");
+        if (v.matches("\\d{8}")) {
+            return v.substring(0,4) + "-" + v.substring(4,6) + "-" + v.substring(6,8);
+        }
+        if (v.matches("\\d{4}-\\d{1,2}-\\d{1,2}")) {
+            String[] p = v.split("-");
+            try {
+                return String.format(Locale.US, "%04d-%02d-%02d",
+                        Integer.parseInt(p[0]), Integer.parseInt(p[1]), Integer.parseInt(p[2]));
+            } catch (Exception ignored) {}
+        }
+        return v;
     }
 
     private static double num(String s) {
@@ -348,12 +404,21 @@ public class MainActivity extends Activity {
         return out;
     }
 
-    private Result analyze(String code, String name, List<Row> input) {
-        if (input.size() < 120) return null;
-        input.sort(Comparator.comparing(r -> r.date));
-        int from = Math.max(0, input.size() - LOOKBACK);
-        List<Row> rows = new ArrayList<>(input.subList(from, input.size()));
-        if (rows.size() < 120) return null;
+    private Result analyze(String code, String name, List<Row> input, String cutoffDate) {
+        List<Row> sorted = new ArrayList<>(input);
+        sorted.sort(Comparator.comparing(r -> r.date));
+
+        List<Row> eligible = new ArrayList<>();
+        for (Row row : sorted) {
+            if (cutoffDate == null || row.date.compareTo(cutoffDate) <= 0) {
+                eligible.add(row);
+            }
+        }
+        if (eligible.size() < 20) return null;
+
+        int from = Math.max(0, eligible.size() - LOOKBACK);
+        List<Row> rows = new ArrayList<>(eligible.subList(from, eligible.size()));
+        if (rows.size() < 20) return null;
 
         double current = rows.get(rows.size() - 1).close;
         double pMin = Double.POSITIVE_INFINITY, pMax = 0;
@@ -451,6 +516,7 @@ public class MainActivity extends Activity {
         Result r = new Result();
         r.code = code;
         r.name = name == null || name.isBlank() ? code : name;
+        r.asOfDate = rows.get(rows.size() - 1).date;
         r.current = current;
         r.supportLow = best.low;
         r.supportHigh = best.high;
@@ -509,7 +575,7 @@ public class MainActivity extends Activity {
 
     private String cardText(Result r) {
         return (r.candidate ? "● 1차 후보  " : "○ 관찰  ") + r.name + "  [" + r.code + "]\n"
-                + "현재 " + money(r.current)
+                + "기준 " + r.asOfDate + "   현재 " + money(r.current)
                 + "   매물대 " + money(r.supportLow) + "~" + money(r.supportHigh)
                 + "   거리 " + pct(r.distancePct) + "\n"
                 + "Support " + one(r.supportScore)
@@ -522,7 +588,8 @@ public class MainActivity extends Activity {
     }
 
     private void showDetail(Result r) {
-        String msg = "현재가: " + money(r.current)
+        String msg = "기준 거래일: " + r.asOfDate
+                + "\n현재가: " + money(r.current)
                 + "\n강한 하단 매물대: " + money(r.supportLow) + " ~ " + money(r.supportHigh)
                 + "\n현재가와 거리: " + pct(r.distancePct)
                 + "\nSupport Score: " + one(r.supportScore)
@@ -577,7 +644,7 @@ public class MainActivity extends Activity {
     }
 
     static class Result {
-        String code, name;
+        String code, name, asOfDate;
         double current, supportLow, supportHigh, distancePct, supportScore;
         double volumeSharePct, launchPct, decline20, decline60, avgTurnover;
         double target, stop, riskReward, rankScore;
