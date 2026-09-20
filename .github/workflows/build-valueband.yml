@@ -48,16 +48,16 @@ jobs:
       - name: Publish APK to repository
         run: |
           mkdir -p downloads
-          cp app/build/outputs/apk/debug/app-debug.apk downloads/ValueBandScanner-v1.0.4.apk
-          sha256sum downloads/ValueBandScanner-v1.0.4.apk > downloads/ValueBandScanner-v1.0.4.sha256
+          cp app/build/outputs/apk/debug/app-debug.apk downloads/ValueBandScanner-v1.0.5.apk
+          sha256sum downloads/ValueBandScanner-v1.0.5.apk > downloads/ValueBandScanner-v1.0.5.sha256
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add downloads/ValueBandScanner-v1.0.4.apk downloads/ValueBandScanner-v1.0.4.sha256
+          git add downloads/ValueBandScanner-v1.0.5.apk downloads/ValueBandScanner-v1.0.5.sha256
           git commit -m "Publish ValueBandScanner v1.0.4 APK [skip ci]" || exit 0
           git push origin HEAD:${{ github.ref_name }}
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ValueBandScanner-v1.0.4
+          name: ValueBandScanner-v1.0.5
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
